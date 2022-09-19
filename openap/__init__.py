@@ -15,8 +15,6 @@ from .emission import Emission
 from .kinematic import WRAP
 from .phase import FlightPhase
 
-
-__version__ = importlib_metadata.version("traffic")  # type: ignore
 __all__ = ["config_dir", "config_file"]
 
 config_dir = Path(user_config_dir("openap"))
