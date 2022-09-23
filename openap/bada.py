@@ -12,6 +12,7 @@ class Bada(object):
 
     def get_param(self, path: str, findall: str = None) -> str:
         if findall is not None:
-            return self.tree.find(path).findall(findall)
+            params = self.tree.find(path).findall(findall)
+            return [elem.text for elem in params]
         else:
-            return self.tree.find(path)
+            return self.tree.find(path).text
