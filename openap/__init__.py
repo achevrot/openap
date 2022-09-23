@@ -14,6 +14,7 @@ from .fuel import FuelFlow
 from .emission import Emission
 from .kinematic import WRAP
 from .phase import FlightPhase
+from .bada import Bada
 
 __all__ = ["config_dir", "config_file"]
 
