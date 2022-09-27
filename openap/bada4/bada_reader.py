@@ -1,9 +1,9 @@
-from . import config, config_file
+from .. import config, config_file
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-class Bada(object):
+class BadaReader(object):
     def __init__(self, aircraft, **kwargs):
 
         self.bada_dir = Path(config.get("bada", "bada_path", fallback=""))
