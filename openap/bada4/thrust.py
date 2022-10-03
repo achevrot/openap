@@ -4,25 +4,26 @@ from numbers import Number
 from typing import List
 import math
 from typing import Any, Tuple
-from . import BadaReader
-from .acm_params import acm_params
+
+# from . import BadaReader
+# from . import Drag
+# from . import acm_params
 
 from pitot.wrapper import default_units
 from pitot import Q_, ureg
 import pitot.isa as isa
 import pitot.aero as aero
 
+from openap.bada4.bada_reader import BadaReader
+from openap.bada4.drag import Drag
+
 
 class Thrust(object):
     def __init__(self, aircraft_type, eng=None, **kwargs):
 
-        self.bada_reader = BadaReader(aircraft_type)
-
-        # TODO : Delete when PR on pitot accepted
-        self.G_0 = Q_(9.80665, "m / s^2")  # Gravitational acceleration
-        self.BETA_T = Q_(-0.0065, "K / m")  # Temperature gradient below tropopause, ISA
-        self.TROPOPAUSE_PRESS = Q_(22632.0401, "Pa")  # pressure at tropopause, ISA
-        self.H_TROP = Q_(11000, "m")  # tropopause altitude
+        self.aircraft_type = aircraft_type
+        self.bada_reader = BadaReader(self.aircraft_type)
+        self.drag = Drag(aircraft_type, **kwargs)
 
     def horner(
         self, coeffs: List[Number], x: Number, smallest_order: int = 0
@@ -40,19 +41,19 @@ class Thrust(object):
             dP = (
                 isa.pressure(Q_(0, "m"))
                 * (isa.temperature(alt) / isa.temperature(Q_(0, "m")))
-                ** (-self.G_0 / (self.BETA_T * isa.R))
+                ** (-isa.G_0 / (isa.BETA_T * isa.R))
                 / isa.pressure(Q_(0, "m"))
             )
         else:
             # bada (2.2-20)
             p_trop = isa.pressure(Q_(0, "m")) * (
-                isa.temperature(self.H_TROP) / isa.temperature(Q_(0, "m"))
-            ) ** (-self.G_0 / (self.BETA_T * isa.R))
+                isa.temperature(isa.H_TROP) / isa.temperature(Q_(0, "m"))
+            ) ** (-isa.G_0 / (isa.BETA_T * isa.R))
             dP = (
                 p_trop
                 * math.exp(
-                    -(self.G_0 / (isa.R * isa.temperature(self.H_TROP)))
-                    * (alt - self.H_TROP)
+                    -(isa.G_0 / (isa.R * isa.temperature(isa.H_TROP)))
+                    * (alt - isa.H_TROP)
                 )
                 / isa.pressure(Q_(0, "m"))
             )
@@ -62,23 +63,33 @@ class Thrust(object):
     def takeoff(self, tas, alt=None, temp=None):
         return self.climb(tas, alt=None, temp=None)
 
-    @default_units(tas="kts", alt="ft", temp="K")
-    def cruise(self, tas, alt, temp=None):
-        # TODO
-        print("to implement")
-        return
+    @default_units(tas="kts", alt="ft", temp="K", mass="kg")
+    def cruise(self, tas, alt, temp=None, mass=None):
+        mass = (
+            mass if mass is not None else self.bada_reader.get_param("ACM/ALM/DLM/MTOW")
+        )
+        drag = Drag(self.aircraft_type)
+        D = drag.clean(mass, tas, alt)
+        return D
 
     @default_units(tas="kts", alt="ft", roc="m / s", temp="K")
     def climb(self, tas, alt, roc=0, temp=None):
         temp = temp if temp is not None else isa.temperature(alt)
         ct = self.climb_ct(tas, alt, temp)
+
         return self.get_thrust(ct, alt)
 
     @default_units(tas="kts", alt="ft", temp="K")
-    def descent_idle(self, tas, alt, temp=None):
-        # TODO
-        print("to implement")
-        return
+    def descent_idle(self, tas, alt):
+        mach = aero.tas2mach(tas, alt)
+        dP = self.get_dp(alt)
+        ti_coeff = self.bada_reader.get_param("PFM/TFM/LIDL/CT")
+        d_coef = []
+        for m_coef in [ti_coeff[i : i + 4] for i in range(0, len(ti_coeff), 4)]:
+            d_coef.append(self.horner(m_coef, dP, -1))
+        ct = self.horner(d_coef, mach)
+
+        return self.get_thrust(ct, alt)
 
     @default_units(tas="kts", alt="ft", temp="K")
     def compute_throttle(self, tas, alt, temp=None):
@@ -137,7 +148,7 @@ class Thrust(object):
         dP = self.get_dp(alt)
 
         mref = self.bada_reader.get_param("PFM/MREF")
-        w_mref = mref * self.G_0
+        w_mref = mref * isa.G_0
         T = dP * w_mref * ct
 
-        return T
+        return T.to("N")
