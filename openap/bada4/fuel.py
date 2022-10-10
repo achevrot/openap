@@ -39,7 +39,7 @@ class FuelFlow(object):
         self.aircraft_type = aircraft_type
         self.thrust = Thrust(self.aircraft_type, eng, **kwargs)
         self.drag = Drag(self.aircraft_type, **kwargs)
-        self.bada_reader = BadaReader(self.aircraft_type)
+        self.bada_reader = BadaReader.getAircraft(self.aircraft_type)
 
     def horner(
         self, coeffs: List[Number], x: Number, smallest_order: int = 0
