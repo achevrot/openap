@@ -23,6 +23,7 @@ class Thrust(object):
 
         self.bada_reader = BadaReader.getAircraft(aircraft_type)
         self.drag = Drag(aircraft_type, **kwargs)
+        self.t0 = isa.temperature(Q_(0, "m")).m
 
     def horner(
         self, coeffs: List[Number], x: Number, smallest_order: int = 0
@@ -31,65 +32,75 @@ class Thrust(object):
             lambda acc, coef: acc * x + coef, reversed(coeffs), 0
         ) * pow(x, smallest_order)
 
-    @default_units(alt="m")
-    def get_dp(self, alt=Q_(0, "m / s")):
+    def get_dp(self, alt):
 
-        t_0 = isa.temperature(Q_(0, "m"))
-        p_0 = isa.pressure(Q_(0, "m"))
-        t_trop = isa.temperature(isa.H_TROP)
+        t_0 = self.t0
+        p_0 = isa.pressure(Q_(0, "m")).m
+        t_trop = isa.temperature(isa.H_TROP).m
 
-        if alt < isa.H_TROP:
+        if alt < isa.H_TROP.m:
             # bada (2.2-18)
             dP = (
                 p_0
-                * pow((isa.temperature(alt) / t_0), (-isa.G_0 / (isa.BETA_T * isa.R)))
+                * pow(
+                    (isa.temperature(Q_(alt, "m")).m / t_0),
+                    (-isa.G_0.m / (isa.BETA_T.m * isa.R.m)),
+                )
                 / p_0
             )
         else:
             # bada (2.2-20)
-            p_trop = p_0 * pow((t_trop / t_0), (-isa.G_0 / (isa.BETA_T * isa.R)))
-            dP = p_trop * exp(-(isa.G_0 / (isa.R * t_trop)) * (alt - isa.H_TROP)) / p_0
+            p_trop = p_0 * pow((t_trop / t_0), (-isa.G_0.m / (isa.BETA_T.m * isa.R.m)))
+            dP = (
+                p_trop
+                * exp(-(isa.G_0.m / (isa.R.m * t_trop)) * (alt - isa.H_TROP.m))
+                / p_0
+            )
         return dP
 
-    @default_units(tas="kts", alt="ft", temp="K")
-    def takeoff(self, tas, alt=Q_(0, "m"), temp=isa.temperature(Q_(0, "m"))):
+    @default_units(tas="kts", alt="ft")
+    def takeoff(self, tas, alt=Q_(0, "m"), temp=None):
+        temp = temp if temp is not None else self.t0
         return self.climb(tas, alt, temp)
 
-    @default_units(tas="kts", alt="ft", temp="K", mass="kg")
-    def cruise(self, tas, alt, temp=isa.temperature(Q_(0, "m")), mass=None):
-        mass = mass if mass is not None else self.bada_reader.get_param("ALM/DLM/MTOW")
+    @default_units(tas="kts", alt="ft")
+    def cruise(self, tas, alt, temp=None, mass=None):
+        mass = (
+            Q_(mass, "kg")
+            if mass is not None
+            else self.bada_reader.get_param("ALM/DLM/MTOW")
+        )
         D = self.drag.clean(mass, tas, alt)
         return D
 
-    @default_units(tas="kts", alt="ft", roc="m / s", temp="K")
-    def climb(self, tas, alt, roc=Q_(0, "m / s"), temp=isa.temperature(Q_(0, "m"))):
-        ct = self.climb_ct(tas, alt, temp)
-        dP = self.get_dp(alt)
-
+    @default_units(tas="kts", alt="ft")
+    def climb(self, tas, alt, roc=Q_(0, "m / s"), temp=None):
+        temp = temp if temp is not None else self.t0
+        dP = self.get_dp(alt.m)
+        ct = self.climb_ct(tas.m, alt.m, dP, temp)
         return self.get_thrust(ct, alt, dP)
 
     @default_units(tas="kts", alt="ft")
     def descent_idle(self, tas, alt):
-        mach = aero.tas2mach(tas, alt)
-        dP = self.get_dp(alt)
-        ti_coeff = self.bada_reader.get_param("PFM/TFM/LIDL/CT")
+        mach = aero.tas2mach(Q_(tas, "kts"), Q_(alt, "m")).m
+        dP = self.get_dp(alt.m)
+        ti_coeff = self.bada_reader.get_param("PFM/TFM/LIDL/CT").m
         d_coef = []
         for m_coef in [ti_coeff[i : i + 4] for i in range(0, len(ti_coeff), 4)]:
             d_coef.append(self.horner(m_coef, dP, -1))
         ct = self.horner(d_coef, mach)
         return self.get_thrust(ct, alt, dP)
 
-    @default_units(tas="kts", alt="ft", temp="K")
-    def compute_throttle(self, tas, alt, temp=isa.temperature(Q_(0, "m"))):
-        kink = self.bada_reader.get_param("PFM/TFM/MCMB/kink")
-        mach = aero.tas2mach(tas, alt)
-        dT = temp / isa.temperature(Q_(0, "m"))
-        dP = self.get_dp(alt)
+    def compute_throttle(self, tas, alt, dP, temp=None):
+        temp = temp if temp is not None else self.t0
+        kink = self.bada_reader.get_param("PFM/TFM/MCMB/kink").m
+        mach = aero.tas2mach(Q_(tas, "kts"), Q_(alt, "m")).m
+        dT = temp / self.t0
 
-        if (temp - isa.temperature(alt)) > kink:
+        if (temp - isa.temperature(Q_(alt, "m")).m) > kink:
             # temp-rated area: eq (3.3-6)
-            ratio = dT * (1 + mach * mach * ((isa.GAMMA - 1) / 2))
-            th_coeff = self.bada_reader.get_param("PFM/TFM/MCMB/temp_rating")
+            ratio = dT * (1 + mach * mach * ((isa.GAMMA.m - 1) / 2))
+            th_coeff = self.bada_reader.get_param("PFM/TFM/MCMB/temp_rating").m
 
             d_coef = []
             for m_coef in [th_coeff[i : i + 5] for i in range(0, len(th_coeff), 5)]:
@@ -100,7 +111,7 @@ class Thrust(object):
             throttle = throttle_temp + throttle_pres
         else:
             # flat-rated area: eq (3.3-5)
-            th_coeff = self.bada_reader.get_param("PFM/TFM/MCMB/flat_rating")
+            th_coeff = self.bada_reader.get_param("PFM/TFM/MCMB/flat_rating").m
             d_coef = []
             for m_coef in [th_coeff[i : i + 6] for i in range(0, len(th_coeff), 6)]:
                 d_coef.append(self.horner(m_coef, mach))
@@ -108,31 +119,30 @@ class Thrust(object):
             throttle = self.horner(d_coef, dP)
         return throttle
 
-    @default_units(tas="kts", alt="ft", temp="K")
-    def climb_ct(self, tas, alt, temp=isa.temperature(Q_(0, "m"))):
-
-        mach = aero.tas2mach(tas, alt)
-        throttle = self.compute_throttle(tas, alt, temp)
+    def climb_ct(self, tas, alt, dP, temp=None):
+        temp = temp if temp is not None else self.t0
+        mach = aero.tas2mach(Q_(tas, "kts"), Q_(alt, "m")).m
+        throttle = self.compute_throttle(tas, alt, dP, temp)
 
         # non-idle rating: eq (3.3-3)
-        ct_coeff = self.bada_reader.get_param("PFM/TFM/CT")
+        ct_coeff = self.bada_reader.get_param("PFM/TFM/CT").m
         d_coef = []
         for m_coef in [ct_coeff[i : i + 6] for i in range(0, len(ct_coeff), 6)]:
             d_coef.append(self.horner(m_coef, mach))
         ct = self.horner(d_coef, throttle)
         return ct
 
-    @default_units(tas="kts", alt="ft", roc="m / s", temp="K")
-    def idle_ct(self, tas, alt, roc=Q_(0, "m / s"), temp=isa.temperature(Q_(0, "m"))):
+    @default_units(tas="kts", alt="ft", temp="K")
+    def idle_ct(self, tas, alt, roc=Q_(0, "m / s"), temp=None):
+        temp = temp if temp is not None else self.t0
         # TODO
         print("to implement")
         return
 
-    @default_units(alt="ft")
     def get_thrust(self, ct, alt, dP):
 
-        mref = self.bada_reader.get_param("PFM/MREF")
-        w_mref = mref * isa.G_0
+        mref = self.bada_reader.get_param("PFM/MREF").m
+        w_mref = mref * isa.G_0.m
         T = dP * w_mref * ct
 
-        return T.to("N")
+        return Q_(T, "N")
