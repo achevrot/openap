@@ -155,8 +155,8 @@ class FuelFlow(object):
         fuelflow = throttle * self.at_thrust(Tmax)
         return fuelflow
 
-    @default_units(mass="kg", tas="kts", alt="ft", path_angle="degree", temp="K")
-    def enroute(self, mass, tas, alt, path_angle=0, limit=True, temp=None):
+    @default_units(mass="kg", tas="kts", alt="m", path_angle="degree", temp="K")
+    def enroute(self, tas, alt, mass=None, path_angle=0, limit="CR", temp=None):
         """Compute the fuel flow during climb, cruise, or descent.
 
         The net thrust is first estimated based on the dynamic equation.
@@ -174,7 +174,13 @@ class FuelFlow(object):
 
         """
 
-        phase = self.get_phase(alt, tas, path_angle)
+        mass = (
+            Q_(mass, "kg")
+            if mass is not None
+            else self.bada_reader.get_param("ALM/DLM/MTOW")
+        )
+
+        # phase = self.get_phase(alt, tas, path_angle)
         mach = aero.tas2mach(tas, alt)
         mref = self.bada_reader.get_param("PFM/MREF")
         w_mref = mref * isa.G_0
@@ -183,8 +189,8 @@ class FuelFlow(object):
         temp = temp if temp is not None else isa.temperature(alt)
         dT = temp / isa.temperature(Q_(0, "m"))
 
-        if phase == "CLIMB":
-            ct = self.thrust.climb_ct(tas, alt)
+        if limit == "CL":
+            ct = self.thrust.climb_ct(tas, alt, dP)
             f_coef = self.bada_reader.get_param("PFM/TFM/CF")
             d_coef = []
             for m_coef in [f_coef[i : i + 5] for i in range(0, len(f_coef), 5)]:
@@ -192,8 +198,8 @@ class FuelFlow(object):
 
             cf = self.horner(d_coef, mach)
 
-        elif phase == "CRUISE":
-            d = self.drag.clean(mass=mass, tas=tas, alt=alt, path_angle=path_angle)
+        elif limit == "CR":
+            d = self.drag.clean(mass=mass, tas=tas, alt=alt)
             ct = d / (w_mref * dP)
             f_coef = self.bada_reader.get_param("PFM/TFM/CF")
             d_coef = []

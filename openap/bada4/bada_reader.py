@@ -22,6 +22,7 @@ class BadaReader(object):
         instance.bada_dir = Path(config.get("bada", "bada_path", fallback=""))
         instance.file_path = instance.bada_dir / f"{aircraft}/{aircraft}.xml"
         instance.tree = etree.parse(instance.file_path)
+        cls.INSTANCES["aircraft"] = instance
         return instance
 
     @lru_cache()
